@@ -183,6 +183,10 @@ class WebCrawlerApp:
         
         result_frame.grid_rowconfigure(0, weight=1)
         result_frame.grid_columnconfigure(0, weight=1)
+        
+        # 清屏按钮
+        clear_btn = ttk.Button(result_frame, text="清空结果", command=self.clear_results)
+        clear_btn.grid(row=2, column=0, sticky="e", padx=5, pady=5)
 
         # 加载设置
         self.load_settings()
@@ -304,7 +308,8 @@ class WebCrawlerApp:
                         headers[key.strip()] = value.strip()
 
                 # 执行爬取循环
-                for _ in range(int(self.loop_count.get())):
+                loop_count = int(self.loop_count.get())
+                for i in range(loop_count):
                     if not self.running:
                         break
                     
@@ -312,13 +317,23 @@ class WebCrawlerApp:
                     delay = random.randint(0, self.current_delay.get())
                     time.sleep(delay)
                     
+                    # 处理变量替换
+                    current_url = self.url_entry.get()
+                    if self.url_var_config:
+                        var_name = self.url_var_config['var_name']
+                        start = self.url_var_config['start']
+                        step = self.url_var_config['step']
+                        current_value = start + i * step
+                        current_url = current_url.replace(f"{{{var_name}}}", str(current_value))
+                    
                     # 发送请求
                     response = requests.get(
-                        self.url_entry.get(),
+                        current_url,
                         headers=headers,
                         verify=self.ssl_verify.get(),
                         cert=(self.client_cert_entry.get(), self.client_key_entry.get()) if self.client_cert_entry.get() else None
                     )
+                    response.encoding = 'utf-8'  # 显式设置编码
                     
                     # 解析内容
                     html = etree.HTML(response.text)
@@ -337,9 +352,9 @@ class WebCrawlerApp:
 
     def update_results(self, results):
         """更新结果展示"""
-        self.tree.delete(*self.tree.get_children())
+        current_count = len(self.tree.get_children()) // max(len(results), 1) + 1
         for idx, result in enumerate(results):
-            self.tree.insert("", tk.END, values=(f"结果 {idx+1}: {result.strip()}",))
+            self.tree.insert("", tk.END, values=(f"第{current_count}次爬取-结果 {idx+1}: {result.strip()}",))
             
     def save_results(self):
         """保存爬取结果"""
@@ -400,6 +415,12 @@ class WebCrawlerApp:
                 
         except Exception as e:
             print(f"加载配置时出错: {str(e)}")
+
+    def clear_results(self):
+        """清空结果展示"""
+        self.tree.delete(*self.tree.get_children())
+        self.status_label.config(text="结果已清空")
+        self.master.update()
 
     def save_settings(self):
         """保存当前配置"""

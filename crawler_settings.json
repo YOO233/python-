@@ -1,0 +1,14 @@
+{
+  "url": "https://www.ccgp.gov.cn/cggg/zygg/zbgg/202502/t20250219_24185{a}.htm",
+  "xpath": "//*[@id=\"detail\"]/div[2]/div/div[2]/div/div[1]/h2/text()",
+  "loop_count": "5",
+  "delay": 1,
+  "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+  "x_requested_with": "xmlhttprequest",
+  "content_type": "text/html; charset=utf-8",
+  "accept_language": "zh,zh-CN;q=0.9,en;q=0.8",
+  "cookie": "",
+  "ssl_verify": true,
+  "client_cert": "",
+  "client_key": ""
+}
