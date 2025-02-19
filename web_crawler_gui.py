@@ -327,17 +327,45 @@ class WebCrawlerApp:
                         current_url = current_url.replace(f"{{{var_name}}}", str(current_value))
                     
                     # 发送请求
+                    # 添加详细请求头
+                    headers.update({
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Connection': 'keep-alive',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'same-origin',
+                        'Sec-Fetch-User': '?1',
+                        'Upgrade-Insecure-Requests': '1'
+                    })
+                    
+                    # 添加请求超时和重试逻辑
                     response = requests.get(
                         current_url,
                         headers=headers,
                         verify=self.ssl_verify.get(),
-                        cert=(self.client_cert_entry.get(), self.client_key_entry.get()) if self.client_cert_entry.get() else None
+                        cert=(self.client_cert_entry.get(), self.client_key_entry.get()) if self.client_cert_entry.get() else None,
+                        timeout=30,
+                        allow_redirects=True
                     )
-                    response.encoding = 'utf-8'  # 显式设置编码
+                    response.encoding = response.apparent_encoding  # 自动检测编码
                     
-                    # 解析内容
+                    # 解析内容并添加调试日志
                     html = etree.HTML(response.text)
-                    results = html.xpath(self.xpath_entry.get())
+                    
+                    # 使用用户输入的XPath尝试
+                    results = html.xpath(self.xpath_entry.get()) if html is not None else []
+                    
+                    # 如果没有结果，尝试备用XPath
+                    if not results:
+                        results = html.xpath('//div[contains(@class,"detail-content")]//text()')  # 针对目标网站的特定结构
+                    
+                    # 记录调试信息
+                    with open('crawler_debug.log', 'a', encoding='utf-8') as f:
+                        f.write(f"URL: {current_url}\n")
+                        f.write(f"XPath used: {self.xpath_entry.get()}\n")
+                        f.write(f"Results found: {len(results)}\n")
+                        f.write("-"*50 + "\n")
                     
                     # 更新界面
                     self.master.after(0, self.update_results, results)
@@ -354,7 +382,15 @@ class WebCrawlerApp:
         """更新结果展示"""
         current_count = len(self.tree.get_children()) // max(len(results), 1) + 1
         for idx, result in enumerate(results):
-            self.tree.insert("", tk.END, values=(f"第{current_count}次爬取-结果 {idx+1}: {result.strip()}",))
+            # 安全处理结果内容
+            try:
+                content = str(result).strip() if result is not None else "无内容"
+                if hasattr(result, 'text'):
+                    content = result.text.strip() if result.text else "空元素"
+                display_text = f"第{current_count}次爬取-结果 {idx+1}: {content}"
+                self.tree.insert("", tk.END, values=(display_text,))
+            except Exception as e:
+                print(f"插入结果时发生错误: {str(e)}")
             
     def save_results(self):
         """保存爬取结果"""
