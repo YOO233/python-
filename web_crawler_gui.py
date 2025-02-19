@@ -24,6 +24,9 @@ class WebCrawlerApp:
         self.results = []
         self.url_var_config = None
         self.current_delay = tk.IntVar(value=3)  # 随机延迟默认3秒
+        self.request_count = 0
+        self.success_count = 0
+        self.failed_count = 0
         
         # 创建界面组件
         self.create_widgets()
@@ -154,13 +157,27 @@ class WebCrawlerApp:
         self.save_btn = ttk.Button(control_frame, text="保存结果", command=self.save_results)
         self.save_btn.pack(side=tk.RIGHT, padx=5)
 
-        # 进度显示
-        progress_frame = ttk.LabelFrame(main_frame, text="进度信息")
+        # 增强版进度显示
+        progress_frame = ttk.LabelFrame(main_frame, text="爬取进度详情")
         progress_frame.grid(row=2, column=0, sticky="ew", pady=5)
         main_frame.grid_rowconfigure(2, weight=0)
         
-        self.progress_bar = ttk.Progressbar(progress_frame, mode='determinate')
-        self.progress_bar.pack(fill=tk.X, padx=5, pady=2)
+        # 分段进度条
+        self.stage_progress = ttk.Progressbar(progress_frame, mode='determinate')
+        self.stage_progress.pack(fill=tk.X, padx=5, pady=2)
+        
+        # 统计信息面板
+        stats_frame = ttk.Frame(progress_frame)
+        stats_frame.pack(fill=tk.X, padx=5)
+        
+        self.stats_labels = {
+            'total': ttk.Label(stats_frame, text="总数:0"),
+            'success': ttk.Label(stats_frame, text="成功:0"),
+            'failed': ttk.Label(stats_frame, text="失败:0"),
+            'speed': ttk.Label(stats_frame, text="速度:0页/秒")
+        }
+        for lbl in self.stats_labels.values():
+            lbl.pack(side=tk.LEFT, padx=10)
         self.status_label = ttk.Label(progress_frame, text="准备就绪")
         self.status_label.pack(fill=tk.X, padx=5)
 
@@ -240,21 +257,24 @@ class WebCrawlerApp:
             end = end_entry.get()
             step = step_entry.get()
             
-            if var_name and start and end and step:
-                try:
-                    self.url_var_config = {
-                        'var_name': var_name,
-                        'start': int(start),
-                        'end': int(end),
-                        'step': int(step)
-                    }
-                    current_url = self.url_entry.get()
-                    if "{" not in current_url:
-                        self.url_entry.insert(tk.END, f"/{{{var_name}}}")
-                    dialog.destroy()
-                except ValueError:
-                    messagebox.showerror("错误", "请输入有效的数字")
-        
+            if not all([var_name, start, end, step]):
+                messagebox.showerror("错误", "所有字段必须填写")
+                return
+                
+            try:
+                self.url_var_config = {
+                    'var_name': var_name,
+                    'start': int(start),
+                    'end': int(end),
+                    'step': int(step)
+                }
+                current_url = self.url_entry.get()
+                if "{" not in current_url:
+                    self.url_entry.insert(tk.END, f"/{{{var_name}}}")
+                dialog.destroy()
+            except ValueError:
+                messagebox.showerror("错误", "请输入有效的数字")
+
         ttk.Button(dialog, text="应用", command=apply_variables).grid(row=5, column=0, columnspan=2, pady=10)
 
     def validate_input(self):
@@ -276,6 +296,7 @@ class WebCrawlerApp:
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
         self.status_label.config(text="爬取进行中...")
+        self.start_time = time.time()  # 记录开始时间
         
         # 创建并启动爬取线程
         threading.Thread(target=self.crawl_worker, daemon=True).start()
@@ -319,12 +340,19 @@ class WebCrawlerApp:
                     
                     # 处理变量替换
                     current_url = self.url_entry.get()
-                    if self.url_var_config:
-                        var_name = self.url_var_config['var_name']
-                        start = self.url_var_config['start']
-                        step = self.url_var_config['step']
-                        current_value = start + i * step
-                        current_url = current_url.replace(f"{{{var_name}}}", str(current_value))
+                    if self.url_var_config and all(key in self.url_var_config for key in ['var_name', 'start', 'step']):
+                        var_name = self.url_var_config.get('var_name', 'page')
+                        start = self.url_var_config.get('start', 1)
+                        step = self.url_var_config.get('step', 1)
+                        # 生成带随机因子的不重复值
+                        current_value = start + i * step + random.randint(0, 9)
+                        current_url = re.sub(re.escape(f"{{{var_name}}}"), str(current_value), current_url)
+                    
+                    # 更新进度和状态
+                    progress = (i+1)/loop_count*100
+                    self.master.after(0, lambda: self.stage_progress.configure(value=progress))
+                    self.master.after(0, lambda: self.status_label.config(
+                        text=f"正在爬取第 {i+1}/{loop_count} 页 ({progress:.1f}%)"))
                     
                     # 发送请求
                     # 添加详细请求头
@@ -374,23 +402,41 @@ class WebCrawlerApp:
                 raise  # 将异常传递到外层处理
 
         except Exception as e:
+            self.failed_count += 1
             self.master.after(0, lambda e=e: messagebox.showerror("错误", f"爬取失败: {str(e)}"))
         finally:
             self.master.after(0, self.stop_crawling)
 
     def update_results(self, results):
-        """更新结果展示"""
-        current_count = len(self.tree.get_children()) // max(len(results), 1) + 1
+        """线程安全更新结果展示"""
+        total_items = len(self.tree.get_children())
+        current_count = total_items // max(len(results), 1) + 1 if total_items > 0 else 1
+        
+        display_data = []
         for idx, result in enumerate(results):
-            # 安全处理结果内容
             try:
                 content = str(result).strip() if result is not None else "无内容"
                 if hasattr(result, 'text'):
                     content = result.text.strip() if result.text else "空元素"
-                display_text = f"第{current_count}次爬取-结果 {idx+1}: {content}"
-                self.tree.insert("", tk.END, values=(display_text,))
+                display_data.append(f"第{current_count}次爬取-结果{idx+1}: {content}")
             except Exception as e:
-                print(f"插入结果时发生错误: {str(e)}")
+                print(f"结果处理错误: {str(e)}")
+        
+        # 批量更新界面（保留历史记录）
+        def safe_update():
+            for text in display_data:
+                self.tree.insert("", tk.END, values=(text,))
+            # 更新所有统计标签
+            elapsed_time = time.time() - self.start_time
+            req_speed = self.request_count / elapsed_time if elapsed_time > 0 else 0
+            
+            self.stats_labels['total'].config(text=f"总请求:{self.request_count}")
+            self.stats_labels['success'].config(text=f"成功:{self.success_count}")
+            self.stats_labels['failed'].config(text=f"失败:{self.failed_count}")
+            self.stats_labels['speed'].config(text=f"速度:{req_speed:.2f} req/s")
+            self.stage_progress['value'] = (current_count / int(self.loop_count.get())) * 100
+            
+        self.master.after(0, safe_update)
             
     def save_results(self):
         """保存爬取结果"""
